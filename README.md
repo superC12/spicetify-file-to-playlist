@@ -78,21 +78,19 @@ spicetify apply
 
 ## 📋 Changelog
 
+Consolidated release notes: patch updates are grouped under their minor release, with basic controls included in the initial feature release. Historical Git commits, tags and source version identifiers are preserved.
+
 ### v1.1.0
 
-- Fixed every song showing "Search failed" on Spotify 1.3.5. Searching now uses Spotify's own search, which works without opening the Search page first, instead of the rate-limited Web API.
-- Select all, Shift+click for ranges, Ctrl+click and Ctrl+A.
-- New **Songs not added** page: copy the songs that won't be added as a list or a CSV.
-- **Retry failed** button for searches that failed.
 
-### v1.0.1
-
-- Dropping a file now shows a small status in the bottom-right corner: a spinner while the file is read, then how many songs were found, or why it couldn't be imported.
-- Drops are caught before Spotify's own drag-and-drop handling, so they no longer get lost.
+- Fixed searching on Spotify 1.3.5 using Spotify's own search.
+- Added **Songs not added**, with plain-list and CSV export, and **Retry failed**.
 
 ### v1.0.0
 
-- Initial release.
+- Initial release: CSV/M3U import, match review, duplicate skipping and playlist creation.
+- Select all, Ctrl+A, Shift+click ranges and Ctrl+click selection.
+- File-drop status with reading progress, song count and import errors; drops are caught before Spotify handles them.
 
 ## License
 
