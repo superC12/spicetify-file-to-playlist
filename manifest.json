@@ -1,0 +1,8 @@
+{
+	"name": "File to Playlist",
+	"description": "Turn a CSV or M3U file into a Spotify playlist. Drop the file onto Spotify, check the matches, create the playlist.",
+	"preview": "preview.png",
+	"main": "fileToPlaylist.js",
+	"readme": "README.md",
+	"tags": ["playlist", "import", "csv", "m3u"]
+}
