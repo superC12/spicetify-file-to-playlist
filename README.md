@@ -75,6 +75,11 @@ spicetify apply
 
 ## 📋 Changelog
 
+### v1.0.1
+
+- Dropping a file now shows a small status in the bottom-right corner: a spinner while the file is read, then how many songs were found, or why it couldn't be imported.
+- Drops are caught before Spotify's own drag-and-drop handling, so they no longer get lost.
+
 ### v1.0.0
 
 - Initial release.

@@ -1,5 +1,5 @@
 // NAME: File to Playlist
-// VERSION: 1.0.0
+// VERSION: 1.0.1
 // DESCRIPTION: Turn a CSV or M3U file into a Spotify playlist. Drop the file onto Spotify, check the matches, create the playlist.
 
 (function fileToPlaylist() {
@@ -340,6 +340,14 @@
 		.plimp-legend span { display: inline-flex; align-items: center; gap: 6px; }
 		.plimp-done { padding: 36px 0 24px; text-align: center; }
 		.plimp-done strong { display: block; margin-bottom: 6px; font-size: 20px; }
+		.plimp-toast { position: fixed; right: 24px; bottom: 110px; z-index: 10000; display: flex; align-items: center; gap: 10px; max-width: 420px; padding: 10px 16px 10px 12px; border-radius: 9999px; background: #2a2a2a; color: #fff; font-size: 13px; font-weight: 600; box-shadow: 0 8px 24px rgba(0,0,0,.5); pointer-events: none; animation: plimp-in .18s ease-out; }
+		.plimp-toast-error { background: #3a1d20; }
+		.plimp-spin { flex: 0 0 auto; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.25); border-top-color: var(--spice-button, #1ed760); border-radius: 50%; animation: plimp-rot .8s linear infinite; }
+		.plimp-badge { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; color: #000; font-size: 12px; font-weight: 800; }
+		.plimp-badge.plimp-ok { background: #1ed760; }
+		.plimp-badge.plimp-error { background: #f15e6c; }
+		@keyframes plimp-rot { to { transform: rotate(360deg); } }
+		@keyframes plimp-in { from { opacity: 0; transform: translateY(8px); } }
 		.plimp-dragglow { position: fixed; inset: 0; z-index: 9998; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.55); color: #fff; font-size: 22px; font-weight: 700; pointer-events: none; border: 3px dashed var(--spice-button, #1ed760); }
 	`;
 	document.head.appendChild(style);
@@ -413,17 +421,47 @@
 		]);
 	}
 
+	// Reads and parses a file. Resolves to { name, tracks }; rejects with a message meant for the user.
+	function loadFile(file) {
+		return new Promise((resolve, reject) => {
+			if (!ACCEPTED.test(file.name)) return reject(new Error(`"${file.name}" isn't a CSV or M3U file.`));
+			if (file.size > MAX_FILE_BYTES) return reject(new Error(`"${file.name}" is larger than 5 MB.`));
+			const reader = new FileReader();
+			reader.onload = () => {
+				const result = parseFile(file.name, String(reader.result ?? ""));
+				if (!result.tracks.length) reject(new Error(`No songs found in "${file.name}". Check that it has a title column.`));
+				else resolve(result);
+			};
+			reader.onerror = () => reject(new Error(`"${file.name}" couldn't be read.`));
+			reader.readAsText(file);
+		});
+	}
+
 	function readFile(file) {
-		if (!ACCEPTED.test(file.name)) return showPicker(`"${file.name}" isn't a CSV or M3U file.`);
-		if (file.size > MAX_FILE_BYTES) return showPicker("That file is larger than 5 MB.");
-		const reader = new FileReader();
-		reader.onload = () => {
-			const { name, tracks } = parseFile(file.name, String(reader.result ?? ""));
-			if (!tracks.length) return showPicker(`No songs found in "${file.name}". Check that it has a title column.`);
-			showReview(name, tracks);
-		};
-		reader.onerror = () => showPicker("That file couldn't be read.");
-		reader.readAsText(file);
+		loadFile(file).then(
+			({ name, tracks }) => showReview(name, tracks),
+			(error) => showPicker(error.message)
+		);
+	}
+
+	// Small status pill in the bottom-right corner, used for files dropped onto Spotify
+	let toast = null;
+	let toastTimer = null;
+	function status(text, kind = "busy", ms = 0) {
+		clearTimeout(toastTimer);
+		if (!toast) {
+			toast = h("div", { class: "plimp-toast", role: "status", "aria-live": "polite" });
+			document.body.append(toast);
+		}
+		const icon = kind === "busy" ? h("span", { class: "plimp-spin" }) : h("span", { class: `plimp-badge plimp-${kind}` }, kind === "ok" ? "✓" : "!");
+		toast.replaceChildren(icon, h("span", {}, text));
+		toast.className = `plimp-toast plimp-toast-${kind}`;
+		if (ms) toastTimer = setTimeout(hideStatus, ms);
+	}
+	function hideStatus() {
+		clearTimeout(toastTimer);
+		toast?.remove();
+		toast = null;
 	}
 
 	// Step 2: match every song, then let the user review
@@ -570,37 +608,67 @@
 	// Small public hook, handy for other extensions and for testing the parser
 	window.FileToPlaylist = { open: () => showPicker(), parseFile };
 
-	// Dropping a CSV or M3U anywhere on Spotify opens the importer with that file
+	// Dropping a CSV or M3U anywhere on Spotify opens the importer with that file. The listeners run in the
+	// capture phase so Spotify's own drag-and-drop handling can't swallow the drop first.
 	let glow = null;
 	let dragDepth = 0;
 	const hasFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes("Files");
-	window.addEventListener("dragenter", (e) => {
-		if (!hasFiles(e) || dialog) return;
-		dragDepth++;
-		if (!glow) {
-			glow = h("div", { class: "plimp-dragglow" }, "Drop a CSV or M3U to import it as a playlist");
-			document.body.append(glow);
-		}
-	});
-	window.addEventListener("dragleave", (e) => {
-		if (!hasFiles(e) || dialog) return;
-		if (--dragDepth <= 0) {
-			dragDepth = 0;
-			glow?.remove();
-			glow = null;
-		}
-	});
-	window.addEventListener("dragover", (e) => {
-		if (hasFiles(e) && !dialog) e.preventDefault();
-	});
-	window.addEventListener("drop", (e) => {
+	const clearGlow = () => {
 		dragDepth = 0;
 		glow?.remove();
 		glow = null;
-		const file = e.dataTransfer?.files?.[0];
-		if (!file || dialog || !ACCEPTED.test(file.name)) return;
-		e.preventDefault();
-		showPicker();
-		readFile(file);
-	});
+	};
+	window.addEventListener(
+		"dragenter",
+		(e) => {
+			if (!hasFiles(e) || dialog) return;
+			dragDepth++;
+			if (!glow) {
+				glow = h("div", { class: "plimp-dragglow" }, "Drop a CSV or M3U to import it as a playlist");
+				document.body.append(glow);
+			}
+		},
+		true
+	);
+	window.addEventListener(
+		"dragleave",
+		(e) => {
+			if (!hasFiles(e) || dialog) return;
+			if (--dragDepth <= 0) clearGlow();
+		},
+		true
+	);
+	window.addEventListener(
+		"dragover",
+		(e) => {
+			if (hasFiles(e) && !dialog) e.preventDefault();
+		},
+		true
+	);
+	window.addEventListener("dragend", clearGlow, true);
+	window.addEventListener(
+		"drop",
+		(e) => {
+			const hadGlow = !!glow;
+			clearGlow();
+			const file = e.dataTransfer?.files?.[0];
+			if (!file || dialog) return;
+			if (!ACCEPTED.test(file.name)) {
+				// Leave other files to Spotify, but say why nothing happened if this looked like an import attempt
+				if (hadGlow) status(`"${file.name}" isn't a CSV or M3U file`, "error", 5000);
+				return;
+			}
+			e.preventDefault();
+			e.stopPropagation();
+			status(`Reading ${file.name}…`, "busy");
+			loadFile(file).then(
+				({ name, tracks }) => {
+					status(`Found ${tracks.length} songs in ${file.name}`, "ok", 3000);
+					showReview(name, tracks);
+				},
+				(error) => status(`Couldn't import: ${error.message}`, "error", 7000)
+			);
+		},
+		true
+	);
 })();
