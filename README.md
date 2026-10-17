@@ -78,7 +78,7 @@ spicetify apply
 
 ## 📋 Changelog
 
-Consolidated release notes: patch updates are grouped under their minor release, with basic controls included in the initial feature release. Historical Git commits, tags and source version identifiers are preserved.
+Related changes are combined under clean release versions.
 
 ### v1.1.0
 
