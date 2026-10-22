@@ -1,5 +1,5 @@
 // NAME: File to Playlist
-// VERSION: 1.1.0
+// VERSION: 1.2.0
 // DESCRIPTION: Turn a CSV or M3U file into a Spotify playlist. Drop the file onto Spotify, check the matches, create the playlist.
 
 (function fileToPlaylist() {
@@ -217,13 +217,38 @@
 	}
 
 	const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+	const REQUEST_TIMEOUT = 8000;
+	// A rate-limited request can hang instead of failing, which used to stall the whole list
+	function withTimeout(promise) {
+		let timer;
+		return Promise.race([promise, new Promise((_, reject) => (timer = setTimeout(() => reject(new Error("Search timed out")), REQUEST_TIMEOUT)))]).finally(() =>
+			clearTimeout(timer)
+		);
+	}
+
+	// Each search method is skipped once it has failed a few times in a row without ever working,
+	// so a dead one doesn't slow down every song
+	const health = { graphql: { ok: 0, failsInARow: 0 }, webapi: { ok: 0, failsInARow: 0 } };
+	const resetHealth = () => Object.values(health).forEach((h) => (h.failsInARow = 0));
+	const usable = (name) => health[name].ok > 0 || health[name].failsInARow < 3;
+	async function tracked(name, run) {
+		try {
+			const result = await withTimeout(run());
+			health[name].ok++;
+			health[name].failsInARow = 0;
+			return result;
+		} catch (error) {
+			health[name].failsInARow++;
+			throw error;
+		}
+	}
 
 	async function searchWebApi(query) {
 		const url = `https://api.spotify.com/v1/search?type=track&limit=6&q=${encodeURIComponent(query)}`;
-		for (let attempt = 1; attempt <= 4; attempt++) {
+		for (let attempt = 1; attempt <= 2; attempt++) {
 			let res;
 			try {
-				res = await Spicetify.CosmosAsync.get(url);
+				res = await withTimeout(Spicetify.CosmosAsync.get(url));
 			} catch (error) {
 				// CosmosAsync throws on error responses instead of returning them
 				const code = Number(String(error?.message ?? error).match(/\b(429|5\d\d)\b/)?.[1]);
@@ -238,8 +263,8 @@
 					duration: t.duration_ms ?? null,
 				}));
 			}
-			if (res?.code === 429 || res?.code >= 500) {
-				await sleep(1500 * attempt);
+			if ((res?.code === 429 || res?.code >= 500) && attempt === 1) {
+				await sleep(2000);
 				continue;
 			}
 			throw new Error(`Search failed${res?.code ? ` (${res.code})` : ""}`);
@@ -289,16 +314,24 @@
 
 	// Spotify's own search first: the public Web API is heavily rate-limited for Spicetify. Fall back to it if needed.
 	async function search(query) {
-		if (!searchDefinition()) return searchWebApi(query);
-		for (let attempt = 1; attempt <= 2; attempt++) {
+		let lastError = new Error("Search failed");
+		if (searchDefinition() && usable("graphql")) {
 			try {
-				return await searchGraphQL(query);
+				return await tracked("graphql", () => searchGraphQL(query));
 			} catch (error) {
 				console.warn("[File to Playlist] Spotify search failed", error);
-				if (attempt === 1) await sleep(800);
+				lastError = error;
 			}
 		}
-		return searchWebApi(query);
+		if (usable("webapi")) {
+			try {
+				return await tracked("webapi", () => searchWebApi(query));
+			} catch (error) {
+				console.warn("[File to Playlist] Web API search failed", error);
+				lastError = error;
+			}
+		}
+		throw lastError;
 	}
 
 	async function findMatches(track) {
@@ -576,6 +609,7 @@
 	function showReview(fileName, tracks) {
 		cancelled = false;
 		const session = ++reviewSession;
+		resetHealth();
 		const rows = tracks.map((track) => ({ track, status: "pending", candidates: [], choice: -1, include: false }));
 		const nameInput = h("input", { type: "text", value: fileName, maxlength: "100", "aria-label": "Playlist name" });
 		const dedupe = h("input", { type: "checkbox", checked: true });
@@ -656,7 +690,7 @@
 			r.select.dataset.state = "";
 			r.select.replaceChildren(
 				...row.candidates.map((c, ci) => h("option", { value: String(ci), selected: ci === row.choice }, describe(c))),
-				h("option", { value: "-1", selected: row.choice === -1 }, row.candidates.length ? "Don't add this song" : row.status === "error" ? "Search failed" : "No match found")
+				h("option", { value: "-1", selected: row.choice === -1 }, row.candidates.length ? "Don't add this song" : row.status === "error" ? `Search failed${row.error ? `: ${row.error}` : ""}` : "No match found")
 			);
 			r.select.disabled = !row.candidates.length;
 		}
@@ -745,7 +779,7 @@
 					Object.assign(row, result, { include: result.status === "matched" || result.status === "check" });
 				} catch (error) {
 					console.warn("[File to Playlist] search failed", row.track, error);
-					Object.assign(row, { status: "error", candidates: [], choice: -1, include: false });
+					Object.assign(row, { status: "error", candidates: [], choice: -1, include: false, error: String(error?.message ?? error).replace(/^Search failed:? ?/, "") });
 				}
 				if (alive() && dialog) refresh();
 			}
@@ -755,6 +789,7 @@
 			while (running < SEARCH_CONCURRENCY && queue.length) worker();
 		};
 		retryBtn.addEventListener("click", () => {
+			resetHealth();
 			rows.forEach((row, i) => {
 				if (row.status !== "error") return;
 				row.status = "pending";

@@ -74,14 +74,19 @@ spicetify apply
 ```
 
 > [!NOTE]
-> Built for Spotify 1.3.5 with Spicetify 2.45.3. Searching uses your own Spotify session, three songs at a time, so a long file takes a minute or two. If something doesn't work, please [open an issue](https://github.com/superC12/spicetify-file-to-playlist/issues) with your Spotify version.
+> Built for Spotify 1.3.5 with Spicetify 2.45.3 and checked against Spotify 1.3.6 with Spicetify 2.46.2. Searching uses your own Spotify session, three songs at a time, so a long file takes a minute or two. If something doesn't work, please [open an issue](https://github.com/superC12/spicetify-file-to-playlist/issues) with your Spotify version.
 
 ## 📋 Changelog
 
 Related changes are combined under clean release versions.
 
-### v1.1.0
+### v1.2.0
 
+- A search that hangs gives up after 8 seconds instead of stalling the list, and a search method that keeps failing is skipped for the rest of the import.
+- Failed rows say why the search failed.
+- Checked against Spotify 1.3.6 with Spicetify 2.46.2.
+
+### v1.1.0
 
 - Fixed searching on Spotify 1.3.5 using Spotify's own search.
 - Added **Songs not added**, with plain-list and CSV export, and **Retry failed**.
